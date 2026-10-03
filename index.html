@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ONE TAKE</title>
+  <meta name="description" content="Uma experiência em plano-sequência renderizada inteiramente na GPU de quem assiste. Role para atravessar mundos." />
+  <meta name="theme-color" content="#000000" />
+  <meta property="og:title" content="ONE TAKE" />
+  <meta property="og:description" content="Uma única tomada, sem cortes, através de mundos. Tudo gerado por código, na GPU de quem assiste. Use fones." />
+  <meta property="og:type" content="website" />
+  <meta name="twitter:card" content="summary" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='28' fill='%23000'/%3E%3Ccircle cx='32' cy='32' r='16' fill='%23d9a441'/%3E%3Ccircle cx='32' cy='32' r='7' fill='%23000'/%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="./src/style.css" />
+</head>
+<body>
+  <canvas id="gl"></canvas>
+
+  <div id="hud">
+    <div id="caption" aria-live="polite"></div>
+    <div id="hint">role <span>↓</span></div>
+    <div id="progress"><div id="progress-fill"></div></div>
+    <button id="mute" title="Som (M)" aria-label="Alternar som">♪</button>
+  </div>
+
+  <section id="intro">
+    <div class="intro-inner">
+      <div class="kicker">TRANSMISSÃO 001</div>
+      <h1>ONE TAKE</h1>
+      <p class="sub">uma única tomada · sem cortes · através de mundos</p>
+      <div id="loader">
+        <div id="loader-bar"><div id="loader-fill"></div></div>
+        <div id="loader-text">inicializando…</div>
+      </div>
+      <button id="start" disabled>
+        <span class="phones">🎧 use fones</span>
+        <span class="go">clique para ligar o drone</span>
+      </button>
+      <p class="fine">desktop · GPU dedicada recomendada · role o mouse para avançar (e para trás)</p>
+      <p id="swwarn" hidden>⚠ A aceleração de hardware do seu navegador está desligada: a GPU não vai trabalhar e tudo vai travar.<br>Ative em <b>Configurações → Sistema → "Usar aceleração de hardware"</b> e reabra o navegador.</p>
+    </div>
+  </section>
+
+  <section id="nogl" hidden>
+    <div class="intro-inner">
+      <h1>ONE TAKE</h1>
+      <p class="sub">Seu navegador não liberou a GPU (WebGL 2).<br>Ative em Configurações → Sistema → "Usar aceleração de hardware", reabra o navegador e recarregue.</p>
+    </div>
+  </section>
+
+  <section id="credits" hidden>
+    <div class="credits-inner">
+      <div class="kicker">FIM DA TRANSMISSÃO</div>
+      <h2>ONE TAKE</h2>
+      <div class="report">
+        <div class="report-title">relatório da sua GPU</div>
+        <div id="gpu-name" class="gpu"></div>
+        <ul>
+          <li><b id="st-particles">0</b><span>partículas simuladas</span></li>
+          <li><b id="st-tris">0</b><span>triângulos desenhados</span></li>
+          <li><b id="st-frames">0</b><span>quadros renderizados</span></li>
+          <li><b id="st-time">0</b><span>no ar</span></li>
+        </ul>
+        <p class="zero">0 modelos 3D · 0 texturas · 0 arquivos de áudio baixados<br>o site inteiro pesa menos que uma foto de celular (~200 KB)</p>
+        <p class="claim">Cada árvore, cada animal, cada estrela e cada som desta experiência foi gerado por código, em tempo real, no seu computador. Nenhum servidor renderizou nada.</p>
+      </div>
+      <div class="sign">
+        <div>criado por <b id="author"></b></div>
+        <a id="github" target="_blank" rel="noopener"></a>
+        <div class="with">construído em parceria com Claude</div>
+      </div>
+      <button id="again">↺ assistir de novo</button>
+      <div class="megabrain">renderizado com todo o poder do MEGABRAIN · copy chief: ativado ✓</div>
+    </div>
+  </section>
+
+  <script type="module" src="./src/main.js"></script>
+</body>
+</html>
