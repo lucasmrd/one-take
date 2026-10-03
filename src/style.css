@@ -45,7 +45,7 @@ html, body {
 
 #hint {
   position: absolute; left: 50%; bottom: 4.5vh; transform: translateX(-50%);
-  font-family: var(--mono); font-size: 12px; letter-spacing: 0.4em; color: var(--dim);
+  font-family: var(--mono); font-size: 12px; letter-spacing: 0.22em; color: var(--dim); white-space: nowrap;
   opacity: 0; transition: opacity 1.2s ease;
 }
 #hint.on { opacity: 1; }
@@ -56,13 +56,17 @@ html, body {
 #progress.on { opacity: 1; }
 #progress-fill { height: 100%; width: 0; background: linear-gradient(90deg, #7ad7ff, var(--gold)); box-shadow: 0 0 10px rgba(232,182,90,0.6); }
 
-#mute {
+.hud-btn {
   position: absolute; right: 22px; top: 18px; pointer-events: auto;
   width: 34px; height: 34px; border-radius: 50%;
   background: rgba(0,0,0,0.25); border: 1px solid rgba(255,255,255,0.18);
   color: var(--dim); font-size: 15px; cursor: pointer; opacity: 0; transition: opacity 1s, color .2s;
 }
-#mute.on { opacity: 1; }
+.hud-btn.on { opacity: 1; }
+#fs { right: 64px; font-size: 14px; }
+#auto { right: 106px; font-size: 11px; padding-left: 2px; }
+#auto.active { color: var(--gold); border-color: rgba(232,182,90,0.6); }
+#fs[hidden] { display: none; }
 #mute.muted { text-decoration: line-through; color: rgba(255,255,255,0.3); }
 
 /* ---------- Intro ---------- */
@@ -144,3 +148,10 @@ h1 {
 #langs button:hover { color: var(--ink); }
 #langs button.on { color: var(--gold); }
 #hint b { font-weight: inherit; }
+
+#auto-badge {
+  position: absolute; right: 150px; top: 27px; font-family: var(--mono); font-size: 10px; letter-spacing: 0.35em;
+  color: var(--gold); opacity: 0; transition: opacity .6s;
+}
+#auto-badge.on { opacity: 0.85; }
+#start .fsnote { font-size: 9.5px; letter-spacing: 0.2em; color: var(--dim); text-transform: none; }

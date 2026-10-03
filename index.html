@@ -20,7 +20,10 @@
     <div id="caption" aria-live="polite"></div>
     <div id="hint"><b data-i18n="hint">role</b> <span>↓</span></div>
     <div id="progress"><div id="progress-fill"></div></div>
-    <button id="mute" data-i18n-title="mute" title="Som (M)" aria-label="Som / Sound">♪</button>
+    <button id="auto" class="hud-btn" data-i18n-title="autoTitle" title="Modo automático" aria-label="Auto">▶</button>
+    <button id="fs" class="hud-btn" data-i18n-title="fsTitle" title="Tela cheia (F)" aria-label="Fullscreen">⛶</button>
+    <button id="mute" class="hud-btn" data-i18n-title="mute" title="Som (M)" aria-label="Som / Sound">♪</button>
+    <div id="auto-badge" data-i18n="autoBadge">AUTOMÁTICO</div>
   </div>
 
   <section id="intro">
@@ -35,6 +38,7 @@
       <button id="start" disabled>
         <span class="phones" data-i18n="phones">🎧 use fones</span>
         <span class="go" data-i18n="go">clique para ligar o drone</span>
+        <span class="fsnote" data-i18n="fsnote">abre em tela cheia · Esc para sair</span>
       </button>
       <p class="fine" data-i18n="fine">desktop · GPU dedicada recomendada · role o mouse para avançar (e para trás)</p>
       <p id="swwarn" data-i18n-html="swwarn" hidden></p>

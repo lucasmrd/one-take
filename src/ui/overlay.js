@@ -34,7 +34,7 @@ export class Overlay {
       $('intro').classList.add('gone');
       setTimeout(() => { $('intro').style.display = 'none'; }, 1700);
       this.progress.classList.add('on');
-      this.mute.classList.add('on');
+      document.querySelectorAll('.hud-btn').forEach((b) => b.classList.add('on'));
       onStart();
     }, { once: true });
   }
@@ -42,7 +42,7 @@ export class Overlay {
   skip() {
     $('intro').style.display = 'none';
     this.progress.classList.add('on');
-    this.mute.classList.add('on');
+    document.querySelectorAll('.hud-btn').forEach((b) => b.classList.add('on'));
   }
 
   noGL() {

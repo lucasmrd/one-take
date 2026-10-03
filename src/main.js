@@ -105,7 +105,7 @@ window.addEventListener('resize', resize);
 resize();
 
 // ------------------------------------------------------------------ boot
-const scroll = new Scroll(TOTAL, { resist });
+const scroll = new Scroll(TOTAL, { resist, autoStop: 972 });
 const audio = new AudioEngine();
 // setTimeout (not rAF) so loading keeps going in a background tab
 const nextFrame = () => new Promise((r) => setTimeout(r, 30));
@@ -179,6 +179,7 @@ function gpuName() {
 let running = false;
 let firstStart = true;
 function start(u0) {
+  if (!params.has('skip')) enterFS();
   // test runs (?skip) stay silent unless ?sound is given
   audio.meterOnly = params.has('meter');
   if (!params.has('skip') || params.has('sound') || params.has('meter')) audio.init();
@@ -188,6 +189,7 @@ function start(u0) {
   if (u0 < 6) scroll.target = 6; // the drone powers on by itself
   stats.t0 = performance.now();
   if (!running) { running = true; schedule(); }
+  if (autoplay > 0) { scroll.autoSpeed = autoplay; scroll.setAuto(true); }
   firstStart = false;
 }
 
@@ -200,7 +202,35 @@ if (params.has('mute')) { audio.muted = true; muteBtn.classList.add('muted'); }
 const wake = () => { if (audio.ctx && audio.ctx.state === 'suspended') audio.ctx.resume(); };
 window.addEventListener('pointerdown', wake);
 window.addEventListener('keydown', wake);
-window.addEventListener('keydown', (e) => { if (e.key === 'm' || e.key === 'M') toggleMute(); });
+window.addEventListener('keydown', (e) => {
+  if (e.key === 'm' || e.key === 'M') toggleMute();
+  if ((e.key === 'f' || e.key === 'F') && running) toggleFS();
+});
+
+// fullscreen: entered on the start click (browsers only allow it inside a user gesture)
+const fsBtn = document.getElementById('fs');
+const fsEl = () => document.fullscreenElement || document.webkitFullscreenElement;
+function enterFS() {
+  const el = document.documentElement;
+  const fn = el.requestFullscreen || el.webkitRequestFullscreen;
+  if (!fn) return;
+  try { const p = fn.call(el, { navigationUI: 'hide' }); if (p && p.catch) p.catch(() => {}); } catch (e) { /* refused */ }
+}
+function toggleFS() {
+  if (fsEl()) { (document.exitFullscreen || document.webkitExitFullscreen).call(document); } else enterFS();
+}
+if (!(document.documentElement.requestFullscreen || document.documentElement.webkitRequestFullscreen)) fsBtn.hidden = true;
+fsBtn.addEventListener('click', toggleFS);
+
+// autopilot: middle mouse button or the ▶ button
+const autoBtn = document.getElementById('auto');
+const autoBadge = document.getElementById('auto-badge');
+scroll.onAuto = (on) => {
+  autoBtn.classList.toggle('active', on);
+  autoBtn.textContent = on ? '❚❚' : '▶';
+  autoBadge.classList.toggle('on', on);
+};
+autoBtn.addEventListener('click', () => scroll.setAuto(!scroll.auto));
 document.getElementById('again').addEventListener('click', () => {
   overlay.hideCredits();
   scroll.jump(0);
@@ -252,7 +282,6 @@ function frame(now) {
   if (window.innerWidth !== sizeW || window.innerHeight !== sizeH) resize();
   if (!sizeW) return;
 
-  if (autoplay > 0 && !overlay.creditsOn) scroll.target = Math.min(TOTAL, scroll.target + dt * autoplay);
   scroll.update(dt);
   const u = scroll.pos;
   ctx.mouse.lerp(mouseTarget, 1 - Math.exp(-dt * 2.5));
