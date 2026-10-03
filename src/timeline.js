@@ -23,22 +23,23 @@ export const TRANSITIONS = [
   { from: 'orbit', to: 'eyeOut', start: 922, end: 932, mode: 5 },
 ];
 
+// [from, to, caption index in i18n.js, style]
 export const CAPTIONS = [
-  [1.5, 18, 'TRANSMISSÃO 001 · SINAL ESTABELECIDO', 'mono'],
-  [22, 44, 'Dizem que a floresta lembra de quem passa por ela.'],
-  [80, 97, 'Nem tudo que te observa daqui está vivo do mesmo jeito.'],
-  [108, 126, 'Alguns chamados atravessam mundos.'],
-  [150, 170, 'E alguns guardiões só aparecem uma vez.'],
-  [203, 213, 'Não desvie o olhar.'],
-  [250, 268, 'Todo olho guarda um universo.'],
-  [324, 344, 'Os antigos desenharam animais no céu.'],
-  [346, 366, 'Eles nunca foram desenhos.'],
-  [458, 480, 'Até a luz se curva para voltar para casa.'],
-  [545, 566, 'Do outro lado, magia é só física que ainda não foi escrita.'],
-  [740, 760, '…e física é só magia que alguém escreveu.'],
-  [894, 914, 'De longe, tudo vira uma luz pequena.'],
-  [940, 952, 'Você achou que estava observando.'],
-  [953, 966, 'Eles sempre estiveram olhando para você.'],
+  [1.5, 18, 0, 'mono'],
+  [22, 44, 1],
+  [80, 97, 2],
+  [108, 126, 3],
+  [150, 170, 4],
+  [203, 213, 5],
+  [250, 268, 6],
+  [324, 344, 7],
+  [346, 366, 8],
+  [458, 480, 9],
+  [545, 566, 10],
+  [740, 760, 11],
+  [894, 914, 12],
+  [940, 952, 13],
+  [953, 966, 14],
 ];
 
 // one-shot sounds (fired when the playhead crosses them going forward)

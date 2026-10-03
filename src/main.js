@@ -8,6 +8,7 @@ import { createCompositeMaterial, createGradeMaterial } from './core/post.js';
 import { AudioEngine } from './core/audio.js';
 import { lerp, smoothstep, bump, range } from './core/util.js';
 import { Overlay } from './ui/overlay.js';
+import { t, applyStatic, setLang } from './i18n.js';
 import { TOTAL, TRANSITIONS, CAPTIONS, EVENTS, resist, soloAt } from './timeline.js';
 import { AnimalModel } from './animals/animal.js';
 import { SPECS } from './animals/specs.js';
@@ -19,6 +20,13 @@ import { CityWorld } from './worlds/city.js';
 import { OrbitWorld } from './worlds/orbit.js';
 
 const params = new URLSearchParams(location.search);
+applyStatic();
+document.querySelectorAll('#langs [data-lang]').forEach((b) => b.addEventListener('click', () => {
+  setLang(b.dataset.lang);
+  const busy = document.getElementById('loader').style.display !== 'none';
+  if (busy) document.getElementById('loader-text').textContent = t('steps')[Math.max(0, bootStep)];
+}));
+let bootStep = -1;
 const overlay = new Overlay();
 const canvas = document.getElementById('gl');
 
@@ -104,26 +112,27 @@ const nextFrame = () => new Promise((r) => setTimeout(r, 30));
 
 async function boot() {
   const steps = [
-    ['esculpindo o lobo', () => { ctx.models = {}; ctx.models.wolf = new AnimalModel(SPECS.wolf); }],
-    ['esculpindo o urso', () => { ctx.models.bear = new AnimalModel(SPECS.bear); }],
-    ['esculpindo o cervo', () => { ctx.models.deer = new AnimalModel(SPECS.deer); }],
-    ['esculpindo a baleia', () => { ctx.models.whale = new AnimalModel(SPECS.whale); }],
-    ['plantando a floresta', () => { worlds.forest = new ForestWorld(ctx); }],
-    ['abrindo o olho', () => { worlds.eyeIn = new EyeWorld(ctx, 'enter'); worlds.eyeOut = new EyeWorld(ctx, 'final'); }],
-    ['acendendo as estrelas', () => { worlds.space = new SpaceWorld(ctx); }],
-    ['escrevendo as runas', () => { worlds.magic = new MagicWorld(ctx); }],
-    ['erguendo a cidade', () => { worlds.city = new CityWorld(ctx); }],
-    ['girando o planeta', () => { worlds.orbit = new OrbitWorld(ctx); }],
-    ['compilando shaders na sua GPU', () => { resize(); warmUp(); }],
+    () => { ctx.models = {}; ctx.models.wolf = new AnimalModel(SPECS.wolf); },
+    () => { ctx.models.bear = new AnimalModel(SPECS.bear); },
+    () => { ctx.models.deer = new AnimalModel(SPECS.deer); },
+    () => { ctx.models.whale = new AnimalModel(SPECS.whale); },
+    () => { worlds.forest = new ForestWorld(ctx); },
+    () => { worlds.eyeIn = new EyeWorld(ctx, 'enter'); worlds.eyeOut = new EyeWorld(ctx, 'final'); },
+    () => { worlds.space = new SpaceWorld(ctx); },
+    () => { worlds.magic = new MagicWorld(ctx); },
+    () => { worlds.city = new CityWorld(ctx); },
+    () => { worlds.orbit = new OrbitWorld(ctx); },
+    () => { resize(); warmUp(); },
   ];
   for (let i = 0; i < steps.length; i++) {
-    overlay.loading(i / steps.length, steps[i][0]);
+    bootStep = i;
+    overlay.loading(i / steps.length, t('steps')[i]);
     await nextFrame();
-    steps[i][1]();
+    steps[i]();
   }
   stats.particles = Object.values(worlds).reduce((a, w) => a + (w.particles || 0), 0)
     + (worlds.forest.grassCount || 0);
-  stats.gpu = gpuName();
+  stats.gpu = null;
 
   const startAt = parseFloat(params.get('t') || '0');
   if (params.has('skip')) { overlay.skip(); start(startAt); } else overlay.ready(() => start(startAt));
@@ -160,9 +169,10 @@ function gpuName() {
     let s = rawRenderer();
     const m = /ANGLE \(([^,]+),\s*([^,(]+?)(?:\s*\(0x[0-9a-fA-F]+\))?(?:\s+Direct3D|\s+OpenGL|\s+Vulkan|,|\))/.exec(s);
     if (m) s = m[2].trim();
-    return `sua ${s.replace(/\s+/g, ' ')}`;
+    s = s.replace(/\s+/g, ' ').trim();
+    return s ? `${t('gpuPrefix')} ${s}` : t('gpuFallback');
   } catch (e) {
-    return 'sua placa de vídeo';
+    return t('gpuFallback');
   }
 }
 
@@ -321,7 +331,7 @@ function frame(now) {
   if (B) wts[bName] = smoothstep(0, 1, p);
   audio.update(u, scroll.vel, wts, time);
   overlay.update(u, TOTAL, scroll.idle, CAPTIONS);
-  if (u > 971.5) overlay.showCredits({ ...stats, seconds: (performance.now() - stats.t0) / 1000 });
+  if (u > 971.5) overlay.showCredits({ ...stats, gpu: gpuName(), seconds: (performance.now() - stats.t0) / 1000 });
   else if (u < 969) overlay.hideCredits();
 }
 

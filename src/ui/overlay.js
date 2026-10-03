@@ -1,4 +1,5 @@
 import { CONFIG } from '../config.js';
+import { t } from '../i18n.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -25,7 +26,7 @@ export class Overlay {
   }
 
   ready(onStart) {
-    this.loading(1, 'pronto');
+    this.loading(1, t('ready'));
     const btn = $('start');
     btn.disabled = false;
     btn.classList.add('ready');
@@ -62,7 +63,7 @@ export class Overlay {
       clearTimeout(this.swapTimer);
       this.swapTimer = setTimeout(() => {
         if (!this.current) return;
-        this.caption.textContent = this.current[2];
+        this.caption.textContent = t('captions')[this.current[2]];
         this.caption.classList.toggle('mono', this.current[3] === 'mono');
         this.caption.classList.add('on');
       }, this.caption.textContent ? 650 : 0);
@@ -75,7 +76,8 @@ export class Overlay {
     this.credits.hidden = false;
     requestAnimationFrame(() => this.credits.classList.add('on'));
     $('gpu-name').textContent = stats.gpu;
-    const fmt = (n) => Math.round(n).toLocaleString('pt-BR');
+    const loc = t('locale');
+    const fmt = (n) => Math.round(n).toLocaleString(loc);
     const count = (id, target, f) => {
       const el = $(id);
       const t0 = performance.now();
@@ -83,12 +85,12 @@ export class Overlay {
         const k = Math.min(1, (performance.now() - t0) / 2200);
         const e = 1 - Math.pow(1 - k, 3);
         el.textContent = f(target * e);
-        if (k < 1) requestAnimationFrame(step);
+        if (k < 1) setTimeout(step, 16);
       };
       step();
     };
     count('st-particles', stats.particles, fmt);
-    count('st-tris', stats.triangles, (n) => (n > 1e9 ? `${(n / 1e9).toLocaleString('pt-BR', { maximumFractionDigits: 1 })} bi` : `${(n / 1e6).toLocaleString('pt-BR', { maximumFractionDigits: 0 })} mi`));
+    count('st-tris', stats.triangles, (n) => (n > 1e9 ? `${(n / 1e9).toLocaleString(loc, { maximumFractionDigits: 1 })} ${t('billion')}` : `${(n / 1e6).toLocaleString(loc, { maximumFractionDigits: 0 })} ${t('million')}`));
     count('st-frames', stats.frames, fmt);
     const m = Math.floor(stats.seconds / 60), s = Math.floor(stats.seconds % 60);
     $('st-time').textContent = `${m}min ${String(s).padStart(2, '0')}s`;
