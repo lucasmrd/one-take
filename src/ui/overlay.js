@@ -14,7 +14,6 @@ export class Overlay {
     this.current = null;
     this.swapTimer = 0;
     this.creditsOn = false;
-    $('author').textContent = CONFIG.author;
     const gh = $('github');
     gh.href = CONFIG.github;
     gh.textContent = CONFIG.githubLabel;
