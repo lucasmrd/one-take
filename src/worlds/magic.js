@@ -96,7 +96,14 @@ export class MagicWorld {
 
   litMaterial(extra = {}) {
     return new THREE.ShaderMaterial({
-      uniforms: { ...this.U, uGlowCol: { value: new THREE.Color(...(extra.glow ?? [0.2, 1.6, 1.8])) }, uVeins: { value: extra.veins ?? 1 } },
+      uniforms: {
+        ...this.U,
+        uGlowCol: { value: new THREE.Color(...(extra.glow ?? [0.2, 1.6, 1.8])) },
+        uVeins: { value: extra.veins ?? 1 },
+        uScan: { value: extra.scan ?? 1 },
+        uRockD: { value: this.ctx.assets.tex.rock_diff }, uRockN: { value: this.ctx.assets.tex.rock_nor },
+        uGrassD: { value: this.ctx.assets.tex.ground_diff },
+      },
       vertexShader: /* glsl */ `
         attribute vec3 color;
         varying vec3 vC, vN, vW, vL;
@@ -115,17 +122,28 @@ export class MagicWorld {
       fragmentShader: /* glsl */ `
         ${NOISE_GLSL}
         ${FOG_PARS}
-        uniform vec3 uGlowCol; uniform float uVeins, uTime;
+        uniform vec3 uGlowCol; uniform float uVeins, uTime, uScan;
+        uniform sampler2D uRockD, uRockN, uGrassD;
         varying vec3 vC, vN, vW, vL;
         void main(){
           vec3 N = normalize(vN);
           if (!gl_FrontFacing) N = -N;
+          // scanned rock and ground, projected from three axes so nothing stretches
+          vec3 bw = pow(abs(N), vec3(4.0)); bw /= dot(bw, vec3(1.0));
+          vec3 tp = vW * 0.09;
+          vec3 rock = texture2D(uRockD, tp.yz).rgb * bw.x + texture2D(uRockD, tp.xz).rgb * bw.y + texture2D(uRockD, tp.xy).rgb * bw.z;
+          vec3 rn = (texture2D(uRockN, tp.yz).xyz * 2.0 - 1.0) * bw.x + (texture2D(uRockN, tp.xz).xyz * 2.0 - 1.0) * bw.y + (texture2D(uRockN, tp.xy).xyz * 2.0 - 1.0) * bw.z;
+          N = normalize(N + (rn - vec3(0.0, 0.0, 1.0)) * 0.35 * uScan);
+          vec3 grass = texture2D(uGrassD, vW.xz * 0.3).rgb * vec3(0.75, 1.05, 0.85);
+          float top = smoothstep(0.55, 0.85, N.y) * smoothstep(-1.0, 0.2, vL.y);
+          vec3 tex = mix(rock * vec3(0.85, 0.75, 0.95), grass, top);
+          vec3 base = mix(vC, tex * (0.6 + vC * 1.4), uScan);
           vec3 L = normalize(vec3(0.5, 0.6, 0.3));
           float diff = max(dot(N, L), 0.0);
           float hemi = N.y * 0.5 + 0.5;
           vec3 V = normalize(cameraPosition - vW);
           float rim = pow(1.0 - max(dot(N, V), 0.0), 3.0);
-          vec3 col = vC * (vec3(0.18, 0.12, 0.3) * hemi + vec3(1.15, 0.85, 0.95) * diff * 0.9);
+          vec3 col = base * (vec3(0.18, 0.12, 0.3) * hemi + vec3(1.15, 0.85, 0.95) * diff * 0.9);
           col += vec3(0.9, 0.4, 0.8) * rim * 0.35;
           float v = abs(snoise(vW * 0.09));
           float vein = (1.0 - smoothstep(0.0, 0.035, v)) * uVeins * smoothstep(-0.5, -4.0, vL.y);
@@ -189,7 +207,7 @@ export class MagicWorld {
     this.islands = [];
     const rnd = this.rnd;
     const treeGeo = this.treeGeo();
-    const treeMat = this.litMaterial({ glow: [2.0, 0.6, 1.6], veins: 0 });
+    const treeMat = this.litMaterial({ glow: [2.0, 0.6, 1.6], veins: 0, scan: 0 });
     const trees = [];
     for (let i = 0; i < 46; i++) {
       const z = 420 - rnd() * 1250;
@@ -282,7 +300,7 @@ export class MagicWorld {
     this.circle = circle;
 
     // the mage: robe, hood, staff and orb
-    const robeMat = this.litMaterial({ veins: 0 });
+    const robeMat = this.litMaterial({ veins: 0, scan: 0 });
     const robe = new THREE.LatheGeometry([[0.001, 0], [1.0, 0], [0.82, 0.7], [0.55, 1.6], [0.42, 2.35], [0.34, 2.75], [0.001, 2.8]].map(([x, y]) => new THREE.Vector2(x, y)), 24);
     tint(robe, [0.06, 0.04, 0.1]);
     const hood = new THREE.SphereGeometry(0.4, 16, 12);

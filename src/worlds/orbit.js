@@ -29,40 +29,35 @@ export class OrbitWorld {
     this.scene.add(skyDome(sky, 50000));
 
     const earth = new THREE.Mesh(new THREE.SphereGeometry(R, 160, 120), new THREE.ShaderMaterial({
-      uniforms: this.U,
-      vertexShader: /* glsl */ `varying vec3 vN, vW; void main(){ vN = normalize(position); vec4 w = modelMatrix * vec4(position, 1.0); vW = w.xyz; gl_Position = projectionMatrix * viewMatrix * w; }`,
+      uniforms: { ...this.U, uDay: { value: ctx.assets.tex.earth_day }, uNight: { value: ctx.assets.tex.earth_night } },
+      vertexShader: /* glsl */ `varying vec3 vN, vW; varying vec2 vUv; void main(){ vUv = uv; vN = normalize(position); vec4 w = modelMatrix * vec4(position, 1.0); vW = w.xyz; gl_Position = projectionMatrix * viewMatrix * w; }`,
       fragmentShader: /* glsl */ `
         ${NOISE_GLSL}
         uniform float uTime; uniform vec3 uSun;
+        uniform sampler2D uDay, uNight;
         varying vec3 vN, vW;
+        varying vec2 vUv;
         void main(){
           vec3 n = normalize(vN);
-          float rot = uTime * 0.006;
-          vec3 sp = vec3(n.x * cos(rot) - n.z * sin(rot), n.y, n.x * sin(rot) + n.z * cos(rot));
-          float cont = fbm3(sp * 1.7 + 2.0) + 0.3 * fbm3(sp * 6.0);
-          float land = smoothstep(0.05, 0.08, cont);
-          float coast = smoothstep(-0.05, 0.05, cont) * (1.0 - land);
-          vec3 ocean = mix(vec3(0.004, 0.018, 0.06), vec3(0.02, 0.09, 0.16), coast);
-          float dry = smoothstep(0.1, 0.55, fbm3lo(sp * 3.0 + 5.0));
-          vec3 ground = mix(vec3(0.05, 0.11, 0.035), vec3(0.3, 0.24, 0.13), dry);
-          ground = mix(ground, vec3(0.2, 0.18, 0.16), smoothstep(0.25, 0.4, cont) * 0.6);
-          vec3 base = mix(ocean, ground, land);
-          float ice = smoothstep(0.8, 0.88, abs(sp.y) + fbm3lo(sp * 5.0) * 0.06);
-          base = mix(base, vec3(0.8, 0.85, 0.9), ice);
+          // NASA Blue Marble (day) and Black Marble (night lights)
+          vec2 uv = vec2(fract(vUv.x + uTime * 0.0004), vUv.y);
+          vec3 day = texture2D(uDay, uv).rgb;
+          vec3 night = texture2D(uNight, uv).rgb;
+          float water = smoothstep(0.015, 0.06, day.b - day.r) * (1.0 - smoothstep(0.2, 0.35, day.g));
           float NdL = dot(n, uSun);
-          float day = smoothstep(-0.06, 0.2, NdL);
+          float dayL = smoothstep(-0.06, 0.2, NdL);
           vec3 V = normalize(cameraPosition - vW);
           vec3 H = normalize(uSun + V);
-          float spec = pow(max(dot(n, H), 0.0), 70.0) * (1.0 - land) * (1.0 - ice) * day;
-          float cl = smoothstep(0.02, 0.5, fbm3(sp * 3.1 + vec3(uTime * 0.003, 0.0, 0.0)));
-          // city lights clustered on land, only at night
-          float cluster = smoothstep(0.1, 0.5, fbm3lo(sp * 9.0));
-          float dots = step(0.82, fract(sin(dot(floor(sp * 420.0), vec3(12.9898, 78.233, 37.719))) * 43758.5453));
-          float lights = land * (1.0 - ice) * (1.0 - day) * (cluster * 0.6 * (0.35 + dots) + dots * 0.15);
-          vec3 col = base * max(NdL, 0.0) * 1.7;
-          col += vec3(1.0, 0.85, 0.7) * spec * 1.2;
-          col = mix(col, vec3(1.0) * max(NdL, 0.0) * 1.6 + vec3(0.02, 0.025, 0.04), cl * 0.85);
-          col += vec3(2.4, 1.4, 0.6) * lights * (1.0 - cl * 0.75);
+          float spec = pow(max(dot(n, H), 0.0), 90.0) * water * dayL;
+          float rot = uTime * 0.006;
+          vec3 sp = vec3(n.x * cos(rot) - n.z * sin(rot), n.y, n.x * sin(rot) + n.z * cos(rot));
+          float cl = smoothstep(0.08, 0.55, fbm3(sp * 3.1 + vec3(uTime * 0.003, 0.0, 0.0))) * 0.75;
+          float lum = dot(night, vec3(0.3, 0.59, 0.11));
+          vec3 lights = night * smoothstep(0.05, 0.35, lum) * 3.2 * (1.0 - dayL);
+          vec3 col = day * max(NdL, 0.0) * 2.4;
+          col += vec3(1.0, 0.85, 0.7) * spec * 1.4;
+          col = mix(col, vec3(1.0) * max(NdL, 0.0) * 1.6 + vec3(0.015, 0.02, 0.035), cl);
+          col += lights * (1.0 - cl * 0.8);
           float fres = pow(1.0 - max(dot(n, V), 0.0), 3.0);
           col += vec3(0.25, 0.5, 1.1) * fres * smoothstep(-0.3, 0.4, NdL) * 1.3;
           col += vec3(1.3, 0.45, 0.15) * exp(-pow(NdL / 0.07, 2.0)) * (0.25 + fres) * 0.6;
