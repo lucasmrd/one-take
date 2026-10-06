@@ -11,6 +11,7 @@ import { Overlay } from './ui/overlay.js';
 import { t, applyStatic, setLang } from './i18n.js';
 import { TOTAL, TRANSITIONS, CAPTIONS, EVENTS, resist, soloAt } from './timeline.js';
 import { AnimalModel } from './animals/animal.js';
+import { loadAssets } from './core/assets.js';
 import { SPECS } from './animals/specs.js';
 import { ForestWorld } from './worlds/forest.js';
 import { EyeWorld } from './worlds/eye.js';
@@ -24,7 +25,7 @@ applyStatic();
 document.querySelectorAll('#langs [data-lang]').forEach((b) => b.addEventListener('click', () => {
   setLang(b.dataset.lang);
   const busy = document.getElementById('loader').style.display !== 'none';
-  if (busy) document.getElementById('loader-text').textContent = t('steps')[Math.max(0, bootStep)];
+  if (busy && bootStep >= 0) document.getElementById('loader-text').textContent = t('steps')[bootStep];
 }));
 let bootStep = -1;
 const overlay = new Overlay();
@@ -124,9 +125,13 @@ async function boot() {
     () => { worlds.orbit = new OrbitWorld(ctx); },
     () => { resize(); warmUp(); },
   ];
+  bootStep = -1;
+  ctx.assets = await loadAssets(renderer, (p, bytes) => {
+    overlay.loading(p * 0.55, `${t('downloading')} · ${(bytes / 1e6).toFixed(0)} MB`);
+  });
   for (let i = 0; i < steps.length; i++) {
     bootStep = i;
-    overlay.loading(i / steps.length, t('steps')[i]);
+    overlay.loading(0.55 + (i / steps.length) * 0.45, t('steps')[i]);
     await nextFrame();
     steps[i]();
   }
@@ -365,6 +370,6 @@ function frame(now) {
 }
 
 // debug handle
-window.OT = { scroll, worlds, stats, audio, jump: (u) => { scroll.jump(u); prevU = u; for (const w of Object.values(worlds)) w.lookInit = false; } };
+window.OT = { scroll, worlds, stats, audio, renderer, ctx, jump: (u) => { scroll.jump(u); prevU = u; for (const w of Object.values(worlds)) w.lookInit = false; } };
 
 boot();

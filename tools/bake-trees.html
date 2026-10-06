@@ -1,0 +1,98 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>bake trees</title>
+<style>html,body{margin:0;background:#333;color:#fff;font:12px monospace}canvas{max-width:100%;display:block}#log{position:fixed;top:4px;left:4px;white-space:pre;background:#0008;padding:4px}</style></head>
+<body><div id="log">loading…</div>
+<script type="module">
+// Bakes impostor atlases (albedo+alpha, normals) of the scanned Poly Haven trees.
+// Usage: /tools/bake-trees.html?tree=fir_tree_01
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+const AZ = 12, ELS = [0, 35], TW = 384, TH = 512;
+const tree = new URLSearchParams(location.search).get('tree') || 'fir_tree_01';
+const RAW = '/@fs/C:/Users/dblaz/Projetos/one-take-raw/models/';
+const log = (s) => { document.getElementById('log').textContent += '\n' + s; console.log(s); };
+
+const W = AZ * TW, H = ELS.length * TH;
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
+renderer.setPixelRatio(1);
+renderer.setSize(W, H);
+renderer.setClearColor(0x000000, 0);
+document.body.appendChild(renderer.domElement);
+
+const gltf = await new GLTFLoader().loadAsync(`${RAW}${tree}/${tree}_1k.gltf`, (e) => { document.getElementById('log').textContent = `loading ${tree} ${(e.loaded / 1e6).toFixed(0)} MB`; });
+log('loaded');
+
+async function save(path, canvas) {
+  const blob = await new Promise((r) => canvas.toBlob(r, 'image/png'));
+  await fetch(`/__save?path=${encodeURIComponent(path)}`, { method: 'POST', body: blob });
+  log('saved ' + path);
+}
+
+const variants = gltf.scene.children.filter((o) => o.isMesh || o.children.length);
+const meta = [];
+for (let vi = 0; vi < variants.length; vi++) {
+  const node = variants[vi];
+  const scene = new THREE.Scene();
+  const obj = node.clone(true);
+  obj.position.set(0, 0, 0);
+  scene.add(obj);
+  obj.updateMatrixWorld(true);
+  const box = new THREE.Box3().setFromObject(obj);
+  const Ht = box.max.y;
+  // horizontal radius around the trunk axis (x=z=0)
+  let R = 0;
+  const v = new THREE.Vector3();
+  obj.traverse((o) => {
+    if (!o.isMesh) return;
+    const p = o.geometry.attributes.position;
+    for (let i = 0; i < p.count; i += 7) { v.fromBufferAttribute(p, i).applyMatrix4(o.matrixWorld); R = Math.max(R, Math.hypot(v.x, v.z)); }
+  });
+  R *= 1.02;
+  const hh = Math.max(...ELS.map((e) => { const r = THREE.MathUtils.degToRad(e); return (Ht * Math.cos(r) + 2 * R * Math.sin(r)) / 2; })) * 1.02;
+  const hw = Math.max(R, hh * TW / TH);
+  const hhF = hw * TH / TW;
+  meta.push({ name: node.name, height: Ht, radius: R, halfW: hw, halfH: hhF, centerY: Ht / 2 });
+  log(`${node.name}: H=${Ht.toFixed(2)} R=${R.toFixed(2)} frame ${(2 * hw).toFixed(2)}x${(2 * hhF).toFixed(2)}`);
+
+  const meshes = [];
+  obj.traverse((o) => { if (o.isMesh) meshes.push(o); });
+  const orig = meshes.map((m) => m.material);
+
+  const albedoMats = orig.map((m) => new THREE.MeshBasicMaterial({ map: m.map, color: m.color, alphaTest: 0.4, side: THREE.DoubleSide }));
+  const normalMats = orig.map((m) => new THREE.ShaderMaterial({
+    uniforms: { map: { value: m.map } },
+    vertexShader: `varying vec3 vN; varying vec2 vUv; void main(){ vUv = uv; vN = normalize(normalMatrix * normal); gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`,
+    fragmentShader: `uniform sampler2D map; varying vec3 vN; varying vec2 vUv;
+      void main(){ float a = texture2D(map, vUv).a; if (a < 0.4) discard; vec3 n = normalize(vN); if (!gl_FrontFacing) n = -n; if (n.z < 0.0) n = reflect(n, vec3(0.0,0.0,1.0)); gl_FragColor = vec4(n * 0.5 + 0.5, 1.0); }`,
+    side: THREE.DoubleSide,
+  }));
+
+  const cam = new THREE.OrthographicCamera(-hw, hw, hhF, -hhF, 0.1, 200);
+  const center = new THREE.Vector3(0, Ht / 2, 0);
+  for (const pass of ['albedo', 'normal']) {
+    meshes.forEach((m, i) => { m.material = pass === 'albedo' ? albedoMats[i] : normalMats[i]; });
+    renderer.outputColorSpace = pass === 'albedo' ? THREE.SRGBColorSpace : THREE.LinearSRGBColorSpace;
+    renderer.setScissorTest(false);
+    renderer.clear();
+    renderer.setScissorTest(true);
+    for (let r = 0; r < ELS.length; r++) for (let a = 0; a < AZ; a++) {
+      const th = (a / AZ) * Math.PI * 2, el = THREE.MathUtils.degToRad(ELS[r]);
+      const dir = new THREE.Vector3(Math.sin(th) * Math.cos(el), Math.sin(el), Math.cos(th) * Math.cos(el));
+      cam.position.copy(center).addScaledVector(dir, 80);
+      cam.up.set(0, 1, 0);
+      cam.lookAt(center);
+      cam.updateProjectionMatrix();
+      // row 0 (elevation 0) at the top of the image
+      const x = a * TW, y = H - (r + 1) * TH;
+      renderer.setViewport(x, y, TW, TH);
+      renderer.setScissor(x, y, TW, TH);
+      renderer.render(scene, cam);
+    }
+    await save(`../one-take-raw/impostors/${tree}_${vi}_${pass}.png`, renderer.domElement);
+  }
+}
+await fetch(`/__save?path=${encodeURIComponent(`../one-take-raw/impostors/${tree}.json`)}`, { method: 'POST', body: JSON.stringify({ az: AZ, els: ELS, tile: [TW, TH], variants: meta }, null, 2) });
+log('DONE');
+window.__done = true;
+</script></body></html>

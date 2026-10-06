@@ -1,5 +1,7 @@
 import * as THREE from 'three';
-import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { createTerrainMaterial } from '../core/terrain.js';
+import { createImpostorForest } from '../core/impostors.js';
+import { firstMesh } from '../core/assets.js';
 import { Simplex, mulberry32, NOISE_GLSL } from '../core/noise.js';
 import { makeFogUniforms, patchMaterial, FOG_PARS } from '../core/fog.js';
 import { Rig, createFurMesh, createSpiritPoints, blendPose } from '../animals/animal.js';
@@ -20,12 +22,20 @@ export class ForestWorld {
     this.S = new Simplex(42);
     this.rnd = mulberry32(1234);
 
-    const sunDir = new THREE.Vector3(0.38, 0.1, -0.92).normalize();
+    // the real sun of the dawn sky photo, turned so it rises ahead of the drone
+    const hdrSun = new THREE.Vector3(0.756, 0.081, 0.65).normalize();
+    const want = Math.atan2(0.38, -0.92), have = Math.atan2(hdrSun.x, hdrSun.z);
+    this.skyYaw = want - have;
+    const sunDir = hdrSun.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), this.skyYaw);
     this.U = {
-      ...makeFogUniforms({ color: [0.3, 0.31, 0.37], sun: [0.78, 0.52, 0.34], sunDir: sunDir.toArray(), density: 0.0034, mist: 0.25, mistBase: -1, mistFall: 0.4 }),
+      ...makeFogUniforms({ color: [0.3, 0.31, 0.37], sun: [0.78, 0.52, 0.34], sunDir: sunDir.toArray(), density: 0.0031, mist: 0.18, mistBase: -1, mistFall: 0.4 }),
       uTime: { value: 0 },
       uWind: { value: 1 },
     };
+    this.U.uSkyTex.value = ctx.assets.tex.sky;
+    this.U.uSkyYaw.value = this.skyYaw;
+    this.U.uSkyExp.value = 1.05;
+    this.U.uSkyMix.value = 1;
     this.sunDir = this.U.uSunDir.value;
 
     this.buildPath();
@@ -114,30 +124,27 @@ export class ForestWorld {
   ground(x, z) { return Math.max(this.height(x, z), WATER_Y); }
 
   buildTerrain() {
-    const seg = 350;
+    const seg = 380;
     const g = new THREE.PlaneGeometry(HALF * 2, HALF * 2, seg, seg);
     g.rotateX(-Math.PI / 2);
     const P = g.attributes.position.array;
     for (let i = 0; i < P.length; i += 3) P[i + 1] = this.height(P[i], P[i + 2]);
     g.computeVertexNormals();
     const Nn = g.attributes.normal.array;
-    const col = new Float32Array(P.length);
-    const c = new THREE.Color(), t = new THREE.Color();
-    for (let i = 0; i < P.length; i += 3) {
-      const x = P[i], y = P[i + 1], z = P[i + 2];
+    const layers = new Float32Array((P.length / 3) * 4);
+    for (let i = 0, j = 0; i < P.length; i += 3, j += 4) {
+      const x = P[i], z = P[i + 2];
       const dr = this.field(this.dRiver, x, z), dp = this.field(this.dPath, x, z);
-      const n = this.S.noise2(x * 0.04, z * 0.04) * 0.5 + 0.5;
-      c.setRGB(0.13 + n * 0.08, 0.19 + n * 0.06, 0.06);
-      t.setRGB(0.07, 0.1, 0.04); c.lerp(t, smoothstep(12, 40, dp) * 0.7);
-      t.setRGB(0.24, 0.19, 0.13); c.lerp(t, 1 - smoothstep(5, 11, dr));
       const slope = 1 - Nn[i + 1];
-      t.setRGB(0.3, 0.29, 0.27); c.lerp(t, smoothstep(0.25, 0.45, slope) * smoothstep(60, 200, dp));
-      t.setRGB(0.92, 0.93, 0.98); c.lerp(t, smoothstep(105, 125, y + n * 10) * (1 - smoothstep(0.55, 0.75, slope)));
-      col[i] = c.r; col[i + 1] = c.g; col[i + 2] = c.b;
+      const n = this.S.noise2(x * 0.03, z * 0.03) * 0.5 + 0.5;
+      const sand = 1 - smoothstep(3, 6.5, dr);
+      const mud = (1 - smoothstep(5, 12, dr)) * (1 - sand);
+      const rock = Math.max(smoothstep(0.28, 0.5, slope), smoothstep(170, 330, dp) * 0.75);
+      const leaves = smoothstep(9, 26, dp) * (1 - smoothstep(220, 320, dp)) * (0.25 + 0.6 * n) * (1 - rock);
+      layers.set([mud, rock, leaves * (1 - mud), sand], j);
     }
-    g.setAttribute('color', new THREE.BufferAttribute(col, 3));
-    const mat = patchMaterial(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.95, metalness: 0 }), this.U);
-    const m = new THREE.Mesh(g, mat);
+    g.setAttribute('layers', new THREE.BufferAttribute(layers, 4));
+    const m = new THREE.Mesh(g, createTerrainMaterial(this.ctx.assets.tex, this.U, this.ctx.assets.envMap));
     m.receiveShadow = true;
     this.scene.add(m);
     this.tris = (this.tris || 0) + seg * seg * 2;
@@ -145,28 +152,19 @@ export class ForestWorld {
 
   buildSky() {
     const mat = new THREE.ShaderMaterial({
-      uniforms: { uSunDir: this.U.uSunDir, uTime: this.U.uTime },
+      uniforms: { ...this.U },
       vertexShader: SKY_VS,
       fragmentShader: /* glsl */ `
-        uniform vec3 uSunDir; uniform float uTime;
+        ${FOG_PARS}
         varying vec3 vDir;
-        ${NOISE_GLSL}
         void main(){
           vec3 d = normalize(vDir);
-          float y = d.y;
-          float sa = max(dot(d, uSunDir), 0.0);
-          vec3 zen = vec3(0.09, 0.2, 0.46);
-          vec3 hor = vec3(1.0, 0.64, 0.44);
-          vec3 col = mix(hor, zen, pow(max(y, 0.0) + 0.015, 0.5));
-          col = mix(col, vec3(1.0, 0.5, 0.3), pow(sa, 6.0) * 0.55 * (1.0 - max(y, 0.0)));
-          col += vec3(1.0, 0.75, 0.5) * pow(sa, 64.0) * 1.3;
-          col += vec3(1.0, 0.9, 0.75) * smoothstep(0.9993, 0.9997, sa) * 40.0;
-          vec2 cp = d.xz / (max(y, 0.0) + 0.12);
-          float cl = fbm3lo(vec3(cp * 0.9 + vec2(uTime * 0.004, 0.0), 1.0));
-          cl = smoothstep(0.05, 0.6, cl) * smoothstep(0.0, 0.18, y) * (1.0 - smoothstep(0.5, 0.9, y));
-          vec3 cc = mix(vec3(0.85, 0.5, 0.48), vec3(1.4, 1.0, 0.75), pow(sa, 3.0));
-          col = mix(col, cc * (0.7 + 1.6 * pow(sa, 6.0)), cl * 0.75);
-          col = mix(col, vec3(0.42, 0.38, 0.4), smoothstep(0.02, -0.15, y));
+          vec3 col = skyPhoto(vec3(d.x, max(d.y, 0.012), d.z));
+          float sa = max(dot(d, normalize(uSunDir)), 0.0);
+          // the photo is tone mapped: give the sun back its HDR punch for bloom and god rays
+          col += vec3(1.0, 0.8, 0.55) * smoothstep(0.99955, 0.99985, sa) * 40.0;
+          col += vec3(1.0, 0.72, 0.45) * pow(sa, 80.0) * 1.2;
+          col = mix(col, skyPhoto(normalize(vec3(d.x, 0.03, d.z))) * 0.9, smoothstep(0.0, -0.12, d.y));
           gl_FragColor = vec4(col, 1.0);
         }
       `,
@@ -178,16 +176,19 @@ export class ForestWorld {
   }
 
   buildLights() {
-    const sun = new THREE.DirectionalLight(new THREE.Color(1.0, 0.78, 0.55), 2.6);
+    const sun = new THREE.DirectionalLight(new THREE.Color(1.0, 0.78, 0.56), 3.4);
     sun.castShadow = true;
-    sun.shadow.mapSize.set(2048, 2048);
+    sun.shadow.mapSize.set(4096, 4096);
     const sc = sun.shadow.camera;
-    sc.left = -110; sc.right = 110; sc.top = 110; sc.bottom = -110; sc.near = 1; sc.far = 900;
-    sun.shadow.bias = -0.0008;
-    sun.shadow.normalBias = 0.6;
+    sc.left = -130; sc.right = 130; sc.top = 130; sc.bottom = -130; sc.near = 1; sc.far = 1200;
+    sun.shadow.bias = -0.0006;
+    sun.shadow.normalBias = 0.5;
     this.scene.add(sun, sun.target);
     this.sun = sun;
-    this.scene.add(new THREE.HemisphereLight(new THREE.Color(0.55, 0.62, 0.85), new THREE.Color(0.2, 0.16, 0.1), 0.9));
+    // image based lighting from the real dawn sky
+    this.scene.environment = this.ctx.assets.envMap;
+    this.scene.environmentIntensity = 0.75;
+    this.scene.environmentRotation.set(0, -this.skyYaw, 0);
   }
 
   buildWater() {
@@ -209,238 +210,164 @@ export class ForestWorld {
           float k = 0.022 / (1.0 + dist * 0.02);
           vec3 N = normalize(vec3((h0 - hx) / e * k, 1.0, (h0 - hz) / e * k));
           vec3 R = reflect(-V, N);
-          float sa = max(dot(R, uSunDir), 0.0);
-          vec3 sky = mix(vec3(1.0, 0.64, 0.44), vec3(0.09, 0.2, 0.46), pow(max(R.y, 0.0) + 0.02, 0.5));
-          sky = mix(sky, vec3(1.15, 0.55, 0.32), pow(sa, 5.0) * 0.6);
-          float tree = smoothstep(-0.02, 0.05, R.y) * (1.0 - smoothstep(0.38, 0.62, R.y));
-          sky = mix(sky, vec3(0.02, 0.035, 0.025), tree * 0.92 * (1.0 - pow(sa, 6.0)));
-          float fres = 0.03 + 0.97 * pow(1.0 - max(dot(N, V), 0.0), 5.0);
-          vec3 deep = vec3(0.015, 0.04, 0.045);
+          vec3 sky = skyPhoto(vec3(R.x, max(R.y, 0.015), R.z));
+          float sa = max(dot(R, normalize(uSunDir)), 0.0);
+          // the forest walls reflect as dark bands above the horizon
+          float tree = smoothstep(-0.02, 0.05, R.y) * (1.0 - smoothstep(0.32, 0.55, R.y));
+          sky = mix(sky, vec3(0.015, 0.025, 0.018), tree * 0.9 * (1.0 - pow(sa, 6.0)));
+          float fres = 0.02 + 0.98 * pow(1.0 - max(dot(N, V), 0.0), 5.0);
+          vec3 deep = vec3(0.006, 0.018, 0.016);
           vec3 col = mix(deep, sky, fres);
-          col += vec3(1.6, 1.1, 0.7) * pow(sa, 400.0) * 3.0;
+          col += vec3(1.6, 1.1, 0.7) * pow(sa, 600.0) * 4.0;
           col = applyFog(col, vW);
-          gl_FragColor = vec4(col, 1.0);
+          // clear near the bank so the stones show through, mirror-like further away
+          float alpha = mix(0.78, 1.0, fres);
+          gl_FragColor = vec4(col, alpha);
         }
       `,
+      transparent: true,
+      depthWrite: false,
     });
     const g = new THREE.PlaneGeometry(HALF * 2, HALF * 2, 1, 1);
     g.rotateX(-Math.PI / 2);
     const m = new THREE.Mesh(g, mat);
     m.position.y = WATER_Y;
+    m.renderOrder = 2;
     this.scene.add(m);
   }
 
-  // ---------------------------------------------------------------------- trees
-  makeConifer(seed, tall) {
-    const rnd = mulberry32(seed);
-    const parts = [];
-    const H = tall ? 17 : 13, R = tall ? 2.6 : 3.3, L = tall ? 7 : 6;
-    const trunk = new THREE.CylinderGeometry(0.16, 0.32, 4, 7, 1);
-    trunk.translate(0, 2, 0);
-    paint(trunk, [0.16, 0.1, 0.07], [0.1, 0.07, 0.05]);
-    parts.push(trunk);
-    for (let i = 0; i < L; i++) {
-      const k = i / L;
-      const r = R * (1 - k * 0.82) * (0.9 + rnd() * 0.2);
-      const h = (H - 2.5) / L * 1.9;
-      const cone = new THREE.ConeGeometry(r, h, 18, 2, true);
-      const P = cone.attributes.position.array;
-      const ph = rnd() * 6.28;
-      for (let j = 0; j < P.length; j += 3) {
-        const rr = Math.hypot(P[j], P[j + 2]);
-        if (rr > 0.05) {
-          // branch clumps: a star-shaped silhouette with drooping tips
-          const a = Math.atan2(P[j + 2], P[j]);
-          const clump = 0.72 + 0.28 * Math.pow(Math.abs(Math.cos(a * 4.5 + ph)), 0.6);
-          const s = clump * (1 + (rnd() - 0.5) * 0.25);
-          P[j] *= s; P[j + 2] *= s;
-          P[j + 1] += (rnd() - 0.5) * 0.2 - (rr / r) * clump * 0.45;
-        }
-      }
-      const cy = 2.5 + k * (H - 3.5) + h * 0.5;
-      cone.translate(0, cy, 0);
-      softNormals(cone, new THREE.Vector3(0, cy - h * 0.2, 0), 0.6);
-      const g = 0.75 + rnd() * 0.3;
-      paint(cone, [0.03 * g, 0.065 * g, 0.035 * g], [0.085 * g, 0.15 * g, 0.065 * g], true);
-      parts.push(cone);
-    }
-    trunk.computeVertexNormals();
-    const geo = mergeGeometries(parts.map((p) => p.toNonIndexed()));
-    return geo;
-  }
-
-  makeBroadleaf(seed, autumn) {
-    const rnd = mulberry32(seed);
-    const parts = [];
-    const trunk = new THREE.CylinderGeometry(0.18, 0.34, 7, 7, 1);
-    trunk.translate(0, 3.5, 0);
-    paint(trunk, [0.3, 0.27, 0.24], [0.18, 0.15, 0.13]);
-    parts.push(trunk);
-    const tint = autumn ? [[0.42, 0.22, 0.04], [0.65, 0.42, 0.08]] : [[0.08, 0.14, 0.04], [0.2, 0.28, 0.08]];
-    const blobs = 5 + Math.floor(rnd() * 3);
-    for (let i = 0; i < blobs; i++) {
-      const r = 2.0 + rnd() * 1.6;
-      const b = new THREE.IcosahedronGeometry(r, 2);
-      const P = b.attributes.position.array;
-      const S = new Simplex(seed * 31 + i);
-      for (let j = 0; j < P.length; j += 3) {
-        const x = P[j] / r, y = P[j + 1] / r, z = P[j + 2] / r;
-        const s = 1 + S.noise3(x * 2.2, y * 2.2, z * 2.2) * 0.3 + S.noise3(x * 6, y * 6, z * 6) * 0.08;
-        P[j] *= s; P[j + 1] *= s * 0.85; P[j + 2] *= s;
-      }
-      const a = rnd() * Math.PI * 2, d = rnd() * 2.2;
-      const c = new THREE.Vector3(Math.cos(a) * d, 7.5 + rnd() * 4.5, Math.sin(a) * d);
-      b.translate(c.x, c.y, c.z);
-      softNormals(b, new THREE.Vector3(0, 9.5, 0).lerp(c, 0.5), 1.0);
-      paint(b, tint[0], tint[1], true);
-      parts.push(b.index ? b.toNonIndexed() : b);
-    }
-    trunk.computeVertexNormals();
-    const geo = mergeGeometries(parts.map((p) => (p.index ? p.toNonIndexed() : p)));
-    return geo;
-  }
-
+  // ---------------------------------------------------------------------- trees (scanned, as impostors)
   buildTrees() {
-    const variants = [
-      { geo: this.makeConifer(1, false), w: 0.42 },
-      { geo: this.makeConifer(2, true), w: 0.3 },
-      { geo: this.makeBroadleaf(3, false), w: 0.16 },
-      { geo: this.makeBroadleaf(4, true), w: 0.12 },
-    ];
-    const mat = patchMaterial(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9, metalness: 0, side: THREE.DoubleSide }), this.U, {
-      vertexPars: 'uniform float uTime; uniform float uWind;',
-      vertexHook: `
-        #ifdef USE_INSTANCING
-          vec3 ip = vec3(instanceMatrix[3][0], 0.0, instanceMatrix[3][2]);
-        #else
-          vec3 ip = vec3(0.0);
-        #endif
-        float sway = sin(uTime * 0.9 + ip.x * 0.05 + ip.z * 0.07) + 0.4 * sin(uTime * 2.1 + ip.x * 0.2);
-        float hh = max(transformed.y - 2.5, 0.0);
-        transformed.x += sway * 0.012 * hh * uWind;
-        transformed.z += sway * 0.006 * hh * uWind;
-      `,
-      fragmentPars: NOISE_GLSL,
-      fragmentHook: `
-        // leaf clumps and bark: breaks up the flat polygons
-        float leaf = snoise(vFogW * 1.7) * 0.5 + snoise(vFogW * 5.3) * 0.3;
-        diffuseColor.rgb *= 0.62 + 0.55 * (leaf * 0.5 + 0.5);
-      `,
-    });
-    const target = 9500;
-    const buckets = variants.map(() => []);
+    const A = this.ctx.assets;
+    const meta = A.json.trees;
+    const inst = [];
     const rnd = this.rnd;
     let tries = 0;
-    while (buckets.reduce((a, b) => a + b.length, 0) < target && tries < 80000) {
+    const target = 19000;
+    while (inst.length < target && tries < 120000) {
       tries++;
       const x = (rnd() * 2 - 1) * (HALF - 20), z = (rnd() * 2 - 1) * (HALF - 20);
       const dp = this.field(this.dPath, x, z), dr = this.field(this.dRiver, x, z);
       const corridor = 9 + this.S.noise2(x * 0.03, z * 0.03) * 4;
-      if (dp < corridor || dr < 13) continue;
+      if (dp < corridor || dr < 12) continue;
       if (dp > 520 && rnd() < 0.85) continue;
       const dc = Math.hypot(x - this.clearing.x, z - this.clearing.z);
       if (dc < 42 + this.S.noise2(x * 0.1, z * 0.1) * 8) continue;
       // open sky behind the howling wolf
       const rdx = x - this.rockSpot.x, rdz = z - this.rockSpot.z;
-      if (Math.hypot(rdx, rdz) < 30 || (rdz < 0 && rdz > -160 && Math.abs(rdx + rdz * 0.41) < 25 - rdz * 0.25)) continue;
+      if (Math.hypot(rdx, rdz) < 26 || (rdz < 0 && rdz > -160 && Math.abs(rdx + rdz * 0.41) < 25 - rdz * 0.25)) continue;
       const y = this.height(x, z);
       if (y < 0.2 || y > 110) continue;
-      // clumping
-      if (this.S.noise2(x * 0.012 + 3, z * 0.012) < -0.35 && rnd() < 0.7) continue;
-      let pick = rnd(), vi = 0;
-      for (; vi < variants.length - 1; vi++) { if (pick < variants[vi].w) break; pick -= variants[vi].w; }
-      const s = 0.7 + rnd() * 0.75 + smoothstep(20, 120, dp) * 0.2;
-      buckets[vi].push([x, y - 0.3, z, s, rnd() * Math.PI * 2]);
+      if (this.S.noise2(x * 0.012 + 3, z * 0.012) < -0.45 && rnd() < 0.6) continue;
+      // firs in the valley, pines on the slopes
+      const pine = rnd() < 0.3 + smoothstep(20, 160, dp) * 0.4;
+      const v = (pine ? 3 : 0) + Math.floor(rnd() * 3);
+      const s = 0.85 + rnd() * 0.35 + smoothstep(30, 160, dp) * 0.15;
+      inst.push([x, y - 0.15, z, s, rnd() * Math.PI * 2, v]);
     }
-    const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(), sc = new THREE.Vector3(), p = new THREE.Vector3();
-    this.treeCount = 0;
-    variants.forEach((v, i) => {
-      const list = buckets[i];
-      const mesh = new THREE.InstancedMesh(v.geo, mat, list.length);
-      list.forEach(([x, y, z, s, r], k) => {
-        e.set((rnd() - 0.5) * 0.06, r, (rnd() - 0.5) * 0.06);
-        q.setFromEuler(e);
-        m4.compose(p.set(x, y, z), q, sc.set(s, s * (0.9 + rnd() * 0.25), s));
-        mesh.setMatrixAt(k, m4);
-      });
-      mesh.castShadow = true;
-      mesh.receiveShadow = true;
-      mesh.computeBoundingSphere();
-      this.scene.add(mesh);
-      this.treeCount += list.length;
-      this.tris += (v.geo.attributes.position.count / 3) * list.length;
-    });
+    this.treeList = inst;
+    this.trees = createImpostorForest(meta, A.tex.trees_albedo, A.tex.trees_normal, inst, this.U);
+    this.scene.add(this.trees);
+    this.treeCount = inst.length;
+    this.tris += inst.length * 2;
   }
 
-  buildRocks() {
-    const rockGeo = (seed, flatTop = false) => {
-      const g = new THREE.IcosahedronGeometry(1, 3);
-      const S = new Simplex(seed);
-      const P = g.attributes.position.array;
-      for (let i = 0; i < P.length; i += 3) {
-        const x = P[i], y = P[i + 1], z = P[i + 2];
-        const n = 1 + S.noise3(x * 1.4, y * 1.4, z * 1.4) * 0.22 + S.noise3(x * 4, y * 4, z * 4) * 0.06;
-        P[i] = x * n; P[i + 1] = y * n; P[i + 2] = z * n;
-        if (flatTop && P[i + 1] > 0.78) P[i + 1] = 0.78 + (P[i + 1] - 0.78) * 0.08;
-      }
-      g.computeVertexNormals();
-      return g;
-    };
-    const mat = patchMaterial(new THREE.MeshStandardMaterial({ color: new THREE.Color(0.3, 0.28, 0.25), roughness: 0.92 }), this.U, {
-      fragmentPars: NOISE_GLSL,
-      fragmentHook: `
-        float rk = snoise(vFogW * 0.9) * 0.5 + snoise(vFogW * 3.1) * 0.3 + snoise(vFogW * 9.0) * 0.2;
-        vec3 wn = normalize(cross(dFdx(vFogW), dFdy(vFogW)));
-        float moss = smoothstep(0.2, 0.6, snoise(vFogW * 0.35 + 4.0)) * smoothstep(0.3, 0.9, abs(wn.y));
-        diffuseColor.rgb *= 0.55 + 0.6 * (rk * 0.5 + 0.5);
-        diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.12, 0.17, 0.06), moss * 0.7);
-      `,
-    });
-    const g = rockGeo(5);
-    const n = 320;
-    const mesh = new THREE.InstancedMesh(g, mat, n);
-    const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(), s = new THREE.Vector3(), p = new THREE.Vector3();
+  // scanned ground cover: rocks, ferns, roots, fallen trunks, moss
+  scatter(gltf, count, place, opts = {}) {
+    const { geometry, material } = firstMesh(gltf);
+    geometry.computeBoundingBox();
+    const size = geometry.boundingBox.getSize(new THREE.Vector3());
+    const mat = material.clone();
+    mat.envMapIntensity = opts.env ?? 1;
+    if (opts.alphaTest) { mat.alphaTest = opts.alphaTest; mat.transparent = false; mat.alphaToCoverage = true; mat.depthWrite = true; mat.side = THREE.DoubleSide; }
+    patchMaterial(mat, this.U);
+    const mesh = new THREE.InstancedMesh(geometry, mat, count);
+    const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(), sc = new THREE.Vector3(), p = new THREE.Vector3();
     let k = 0, tries = 0;
-    while (k < n && tries < 20000) {
+    while (k < count && tries < count * 30) {
       tries++;
-      const t = this.rnd() * 0.86;
-      const c = this.curve.getPointAt(t);
-      const side = this.rnd() < 0.5 ? -1 : 1;
-      const tan = this.curve.getTangentAt(t);
-      const lat = side * (5 + this.rnd() * 14);
-      const x = c.x - tan.z * lat, z = c.z + tan.x * lat;
+      const r = place(size);
+      if (!r) continue;
+      const [x, z, s, tilt = 0.08, sink = 0.05] = r;
       const y = this.height(x, z);
-      const sz = 0.25 + Math.pow(this.rnd(), 3) * 2.2;
-      e.set(this.rnd() * 3, this.rnd() * 3, this.rnd() * 3);
-      m4.compose(p.set(x, y - sz * 0.3, z), q.setFromEuler(e), s.set(sz * (1 + this.rnd() * 0.6), sz * 0.7, sz));
+      e.set((this.rnd() - 0.5) * tilt, this.rnd() * Math.PI * 2, (this.rnd() - 0.5) * tilt);
+      m4.compose(p.set(x, y - sink * s * size.y, z), q.setFromEuler(e), sc.setScalar(s));
       mesh.setMatrixAt(k++, m4);
     }
     mesh.count = k;
-    mesh.castShadow = true; mesh.receiveShadow = true;
+    mesh.castShadow = opts.shadow ?? true;
+    mesh.receiveShadow = true;
     mesh.computeBoundingSphere();
     this.scene.add(mesh);
+    this.tris += (geometry.index ? geometry.index.count / 3 : geometry.attributes.position.count / 3) * k;
+    return mesh;
+  }
 
-    // the howling rock
+  nearPath(minLat, maxLat, tMax = 1) {
+    const t = this.rnd() * tMax;
+    const c = this.curve.getPointAt(t), tan = this.curve.getTangentAt(t);
+    const lat = (this.rnd() < 0.5 ? -1 : 1) * (minLat + this.rnd() * (maxLat - minLat));
+    return [c.x - tan.z * lat + (this.rnd() - 0.5) * 4, c.z + tan.x * lat + (this.rnd() - 0.5) * 4];
+  }
+
+  buildRocks() {
+    const G = this.ctx.assets.gltf;
+    const dryLand = (x, z) => this.field(this.dRiver, x, z) > 5.5 && this.height(x, z) > WATER_Y + 0.05;
+    // river stones and mossy rock sets along the banks
+    for (const key of ['rock1', 'rock2']) {
+      this.scatter(G[key], 110, (size) => {
+        const [x, z] = this.nearPath(3.5, 22, 0.88);
+        return [x, z, (0.5 + Math.pow(this.rnd(), 2) * 1.4) * (2.2 / Math.max(size.x, size.z)), 0.4, 0.15];
+      });
+    }
+    // ferns carpet the forest edge
+    this.scatter(G.fern, 2600, (size) => {
+      const [x, z] = this.nearPath(6, 40);
+      if (!dryLand(x, z)) return null;
+      return [x, z, (0.6 + this.rnd() * 0.6) * (1.5 / Math.max(size.x, size.z, 0.01)), 0.25, 0.0];
+    }, { alphaTest: 0.45, shadow: false, env: 0.8 });
+    // roots at the feet of the trees nearest the path
+    const near = this.treeList.filter(([x, , z]) => this.field(this.dPath, x, z) < 40);
+    this.scatter(G.roots, Math.min(180, near.length), () => {
+      const tr = near[Math.floor(this.rnd() * near.length)];
+      return [tr[0], tr[2], tr[3] * 1.1, 0.05, 0.02];
+    });
+    // fallen trunks
+    this.scatter(G.trunk, 36, (size) => {
+      const [x, z] = this.nearPath(9, 38, 0.95);
+      if (!dryLand(x, z)) return null;
+      return [x, z, (0.8 + this.rnd() * 0.5) * (9 / Math.max(size.x, size.z)), 0.06, 0.12];
+    });
+    // a few big boulders in the woods
+    this.scatter(G.boulder, 26, (size) => {
+      const [x, z] = this.nearPath(12, 60, 0.95);
+      if (!dryLand(x, z)) return null;
+      return [x, z, (1.2 + this.rnd() * 2.5) * (2 / Math.max(size.x, size.z)), 0.3, 0.25];
+    });
+
+    // the howling rock: a scanned boulder, scaled up into a lookout
     const t = 0.5;
     const c = this.curve.getPointAt(t), tan = this.curve.getTangentAt(t);
     const lat = 14;
     const rx = c.x - tan.z * lat, rz = c.z + tan.x * lat;
     const gy = this.height(rx, rz);
-    const big = new THREE.Mesh(rockGeo(9, true), mat);
-    big.scale.set(4.6, 9.5, 5.2);
-    big.position.set(rx, gy - 0.4, rz);
+    const { geometry, material } = firstMesh(G.boulder);
+    geometry.computeBoundingBox();
+    const bb = geometry.boundingBox;
+    const scale = 9.5 / (bb.max.y - bb.min.y);
+    const mat = material.clone();
+    patchMaterial(mat, this.U);
+    const big = new THREE.Mesh(geometry, mat);
+    big.scale.set(scale * 0.75, scale, scale * 0.85);
     big.rotation.y = Math.atan2(tan.x, tan.z);
+    big.position.set(rx, gy - 0.6 - bb.min.y * scale, rz);
     big.castShadow = big.receiveShadow = true;
     this.scene.add(big);
-    for (let i = 0; i < 4; i++) {
-      const r = new THREE.Mesh(rockGeo(20 + i), mat);
-      const a = i * 1.7 + 0.5;
-      r.scale.setScalar(2 + i * 0.6);
-      r.position.set(rx + Math.cos(a) * 7, gy - 0.5, rz + Math.sin(a) * 7);
-      r.castShadow = r.receiveShadow = true;
-      this.scene.add(r);
-    }
-    this.wolfRock = new THREE.Vector3(rx, gy - 0.4 + 0.78 * 9.5 - 0.05, rz);
+    big.updateMatrixWorld(true);
+    // stand the wolf on the real top surface of the scan
+    const ray = new THREE.Raycaster(new THREE.Vector3(rx, gy + 60, rz), new THREE.Vector3(0, -1, 0));
+    const hit = ray.intersectObject(big)[0];
+    this.wolfRock = new THREE.Vector3(rx, hit ? hit.point.y - 0.05 : gy + 8, rz);
     this.wolfRockYaw = Math.atan2(tan.x, tan.z);
   }
 
@@ -670,7 +597,7 @@ export class ForestWorld {
           vec3 lp = position;
           float flap = sin(uTime * (15.0 + iRnd.y * 7.0) + iRnd.z * 30.0);
           lp.y += abs(lp.x) * flap * 0.9 * step(0.001, t);
-          lp *= (0.9 + iRnd.w * 0.5) * mix(0.0, 1.0, step(0.0001, t) * 0.999 + 0.001);
+          lp *= (0.55 + iRnd.w * 0.3) * mix(0.0, 1.0, step(0.0001, t) * 0.999 + 0.001);
           vec3 wp = pos + right * lp.x + up * lp.y + fwd * lp.z;
           vW = wp;
           gl_Position = projectionMatrix * viewMatrix * vec4(wp, 1.0);
@@ -771,8 +698,6 @@ export class ForestWorld {
     const cam = this.camera;
 
     // sun rises a little during the forest
-    const elev = lerp(0.08, 0.16, range(u, 0, 240));
-    this.sunDir.set(lerp(0.38, 0.85, smoothstep(135, 185, u)), elev, -0.92).normalize();
     this.sun.position.copy(cam.position).addScaledVector(this.sunDir, 400);
     this.sun.target.position.copy(cam.position);
     U.uMist.value = lerp(0.2, 0.05, range(u, 20, 110));
